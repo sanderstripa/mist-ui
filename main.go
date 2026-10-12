@@ -147,7 +147,7 @@ func main() {
 			log.Fatal(err)
 		}
 		cfg := Config{Username: *username, Listen: *listen, Cert: *cert, TLSKey: *key, CoreBinary: *core, ServerFile: *server, StatsFile: "/var/lib/mist-ui/stats.json", WebPath: "/" + random(12)}
-		if err := initialize(*dir, cfg, strings.TrimSpace(string(password))); err != nil {
+		if err := initialize(*dir, cfg, strings.TrimRight(string(password), "\r\n")); err != nil {
 			log.Fatal(err)
 		}
 		var saved Config
@@ -161,7 +161,7 @@ func main() {
 	}
 	if *reset {
 		b, _ := io.ReadAll(io.LimitReader(os.Stdin, 100))
-		if err = a.setPassword(strings.TrimSpace(string(b))); err != nil {
+		if err = a.setPassword(strings.TrimRight(string(b), "\r\n")); err != nil {
 			log.Fatal(err)
 		}
 		fmt.Println("Password changed; restart mist-ui.service")
@@ -640,6 +640,10 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "Некорректный порт")
 		return
 	}
+	if in.Port == 80 {
+		problem(w, 400, "TCP 80 зарезервирован для продления сертификата")
+		return
+	}
 	var oldCore map[string]any
 	if err := readJSON(a.cfg.ServerFile, &oldCore); err != nil {
 		problem(w, 500, "Конфигурация ядра недоступна")
@@ -647,7 +651,13 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 	}
 	bind, oldPort, _ := net.SplitHostPort(str(oldCore, "listen"))
 	changed := in.Port > 0 && strconv.Itoa(in.Port) != oldPort
-	rollbackCore := func() { _ = writeJSON(a.cfg.ServerFile, oldCore); _, _ = a.control("restart") }
+	wasActive := false
+	rollbackCore := func() {
+		_ = writeJSON(a.cfg.ServerFile, oldCore)
+		if wasActive {
+			_, _ = a.control("restart")
+		}
+	}
 	if changed {
 		_, panelPort, _ := net.SplitHostPort(a.cfg.Listen)
 		if strconv.Itoa(in.Port) == panelPort {
@@ -680,6 +690,7 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		status, _ := a.control("is-active")
+		wasActive = status == "active"
 		if status == "active" {
 			if _, err = a.control("restart"); err != nil {
 				rollbackCore()

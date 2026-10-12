@@ -48,12 +48,16 @@ jobs:
           set -euo pipefail
           version=$(cat VERSION)
           mkdir -p dist
+          go mod download
+          (cd engine; go mod download)
+          python3 tools/licenses.py
           for arch in amd64 arm64; do
             mkdir -p "dist/$arch"
             CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags "-s -w -X main.Version=$version" -o "dist/$arch/mist-ui" .
             (cd engine; CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags '-s -w' -o "../dist/$arch/mist-edge" ./cmd/mist-edge)
             cp LICENSE README.md "dist/$arch/"
-            tar -C "dist/$arch" -czf "dist/mist-ui-linux-$arch.tar.gz" mist-ui mist-edge LICENSE README.md
+            cp -r dist/licenses "dist/$arch/"
+            tar -C "dist/$arch" -czf "dist/mist-ui-linux-$arch.tar.gz" mist-ui mist-edge LICENSE README.md licenses
           done
           cd dist
           sha256sum mist-ui-linux-*.tar.gz > SHA256SUMS

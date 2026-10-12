@@ -16,6 +16,7 @@ type Key struct {
 	TokenHash string `json:"token_hash"`
 	Address   string `json:"address"`
 	Enabled   bool   `json:"enabled"`
+	Revoked   bool   `json:"revoked,omitempty"`
 	Expires   int64  `json:"expires,omitempty"`
 }
 type Policy struct {
@@ -69,7 +70,7 @@ func (s *Store) Lookup(token string, now time.Time) (Key, error) {
 		s.size = info.Size()
 	}
 	k, ok := s.keys[Hash(token)]
-	if !ok || !k.Enabled || (k.Expires != 0 && now.Unix() >= k.Expires) {
+	if !ok || !k.Enabled || k.Revoked || (k.Expires != 0 && now.Unix() >= k.Expires) {
 		return Key{}, errors.New("access denied")
 	}
 	return k, nil

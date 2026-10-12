@@ -30,6 +30,7 @@ if [[ $upgrading == 0 ]]; then
  python3 -c 'import ipaddress,sys; ip=ipaddress.ip_address(sys.argv[1]); assert ip.version==4 and ip.is_global' "$ip" || die 'Укажите публичный IPv4.'
  read -r -p 'Порт HTTPS-панели [2097]: ' panel_port </dev/tty; panel_port=${panel_port:-2097}
  [[ $panel_port =~ ^[0-9]+$ ]] && ((panel_port>0&&panel_port<65536)) || die 'Некорректный порт.'
+ [[ $panel_port != 80 ]] || die 'TCP 80 зарезервирован для выдачи и продления сертификата.'
  ss -H -lnt "sport = :$panel_port" | grep -q . && die 'Порт панели занят. Выберите свободный порт.'
  read -r -p 'Логин администратора [admin]: ' username </dev/tty; username=${username:-admin}
  read -r -s -p 'Пароль (12–72 символа; Enter — сгенерировать): ' password </dev/tty;echo
@@ -49,7 +50,7 @@ rollback(){
  systemctl stop mist-ui.service mist-edge.service 2>/dev/null || true
  for path in "${managed[@]}"; do
   if [[ -f $backup$path ]]; then mkdir -p "$(dirname "$path")"; cp -p "$backup$path" "$path"
-  elif [[ $path == /etc/systemd/system/* ]]; then rm -f "$path"; fi
+  elif [[ -f $path ]]; then rm -f "$path"; fi
  done
  systemctl daemon-reload
  [[ $old_core_active == active ]] && systemctl start mist-edge.service || true
@@ -62,6 +63,7 @@ install -d -m 700 /etc/mist /etc/mist-ui /var/lib/mist-ui
 if [[ ! -f /etc/mist/server.json ]]; then
  read -r -p 'Порт MIST TCP/UDP [443]: ' vpn_port </dev/tty;vpn_port=${vpn_port:-443}
  [[ $vpn_port =~ ^[0-9]+$ ]] && ((vpn_port>0&&vpn_port<65536)) || die 'Некорректный порт MIST.'
+ [[ $vpn_port != 80 ]] || die 'TCP 80 зарезервирован для сертификата.'
  [[ $vpn_port != "$panel_port" ]] || die 'Порты панели и MIST должны различаться.'
  if ss -H -lnt "sport = :$vpn_port" | grep -q . || ss -H -lnu "sport = :$vpn_port" | grep -q .; then die 'Порт MIST занят. Существующую службу установщик не остановит.'; fi
  if ss -H -lnt 'sport = :80' | grep -q .; then die 'Для выдачи IP-сертификата нужен свободный TCP 80. Существующий веб-сервер не остановлен.'; fi

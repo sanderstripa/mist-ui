@@ -132,7 +132,7 @@ func main() {
 				f.Flush()
 			}
 			log.Printf("MIST: lane connected; assigned=%s transport=h3-lanes lane=%d", clientPrefix, lane)
-			defer watchAccess(r, func() { _ = r.Body.Close() })()
+			defer watchAccess(r, func() { _ = http.NewResponseController(w).SetWriteDeadline(time.Now()); _ = r.Body.Close() })()
 			if err := pumpFramedInbound(r.Body, dispatcher, clientPrefix.Addr()); err != nil && !errors.Is(err, context.Canceled) {
 				log.Printf("MIST: lane %d disconnected: %v", lane, err)
 			}

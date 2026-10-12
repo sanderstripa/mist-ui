@@ -211,12 +211,12 @@ func (h *laneHub) register(sessionID string, lane int, w http.ResponseWriter) (f
 		}
 		h.mu.Unlock()
 
+		if release != nil {
+			release()
+		}
 		if removed != nil {
 			removed.closeQueue()
 			<-removed.done
-		}
-		if release != nil {
-			release()
 		}
 	}, nil
 }

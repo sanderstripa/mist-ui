@@ -44,7 +44,7 @@ func serveSingleStreamTransport(d *edgeDispatcher, w http.ResponseWriter, r *htt
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	defer watchAccess(r, func() { _ = r.Body.Close() })()
+	defer watchAccess(r, func() { _ = http.NewResponseController(w).SetWriteDeadline(time.Now()); _ = r.Body.Close() })()
 	return pumpFramedInbound(r.Body, d, authorizedPrefix(r).Addr())
 }
 
