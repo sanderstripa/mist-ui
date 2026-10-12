@@ -79,6 +79,7 @@ PY
 fi
 if [[ $upgrading == 0 ]]; then
  authority=$(jq -r '.authority // empty' /etc/mist/server.json)
+ jq -e '(.tun_ipv6_cidr // "") == "" and (.client_ipv6_cidr // "") == ""' /etc/mist/server.json >/dev/null || die 'Эта версия панели управляет IPv4. Существующий IPv6-туннель не изменён; требуется отдельная миграция.'
  [[ $authority == "$ip" ]] || die 'IPv4 панели должен совпадать с authority существующего MIST.'
  cert=$(jq -r '.certificate' /etc/mist/server.json);key=$(jq -r '.private_key' /etc/mist/server.json)
  legacy_key=$(jq -r '.token // empty' /etc/mist/server.json)
