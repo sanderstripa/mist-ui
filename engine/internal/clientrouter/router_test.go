@@ -2,12 +2,25 @@ package clientrouter
 
 import (
 	"net/netip"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
-type sink struct{ packets int }
+type sink struct{ packets atomic.Int64 }
 
-func (s *sink) WritePacket([]byte) error { s.packets++; return nil }
+func (s *sink) WritePacket([]byte) error { s.packets.Add(1); return nil }
+func wait(t *testing.T, check func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if check() {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("delivery did not complete")
+}
 func packet(src, dst string) []byte {
 	p := make([]byte, 20)
 	p[0] = 0x45
@@ -35,7 +48,8 @@ func TestIndependentClientsAndSourceIsolation(t *testing.T) {
 	}
 	_ = r.Deliver(packet("8.8.8.8", ipA.String()))
 	_ = r.Deliver(packet("8.8.8.8", ipB.String()))
-	if a.packets != 1 || b.packets != 1 {
+	wait(t, func() bool { return a.packets.Load() == 1 && b.packets.Load() == 1 })
+	if a.packets.Load() != 1 || b.packets.Load() != 1 {
 		t.Fatal("response routed to wrong device")
 	}
 	sub := netip.MustParsePrefix("10.77.43.0/24")
@@ -52,7 +66,35 @@ func TestIndependentClientsAndSourceIsolation(t *testing.T) {
 	release()
 	_ = r.Deliver(packet("8.8.8.8", ipA.String()))
 	_ = r.Deliver(packet("8.8.8.8", ipB.String()))
-	if a.packets != 1 || b.packets != 2 {
+	wait(t, func() bool { return b.packets.Load() == 2 })
+	if a.packets.Load() != 1 || b.packets.Load() != 2 {
 		t.Fatal("disconnect affected other device")
 	}
+}
+
+type blockedSink struct{ allow chan struct{} }
+
+func (s *blockedSink) WritePacket([]byte) error { <-s.allow; return nil }
+func TestSlowDeviceDoesNotBlockOtherDevices(t *testing.T) {
+	r := Router{}
+	slow := &blockedSink{make(chan struct{})}
+	fast := &sink{}
+	a, b := netip.MustParseAddr("10.77.43.2"), netip.MustParseAddr("10.77.43.3")
+	releaseA, _ := r.Register(a, slow)
+	releaseB, _ := r.Register(b, fast)
+	defer releaseA()
+	defer releaseB()
+	defer close(slow.allow)
+	finished := make(chan struct{})
+	go func() {
+		_ = r.Deliver(packet("8.8.8.8", a.String()))
+		_ = r.Deliver(packet("8.8.8.8", b.String()))
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("slow peer blocked TUN dispatcher")
+	}
+	wait(t, func() bool { return fast.packets.Load() == 1 })
 }

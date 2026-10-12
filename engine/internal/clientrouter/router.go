@@ -8,13 +8,19 @@ import (
 
 type Sink interface{ WritePacket([]byte) error }
 type Stats struct {
-	RX     uint64 `json:"rx"`
-	TX     uint64 `json:"tx"`
-	Active bool   `json:"active"`
+	RX      uint64 `json:"rx"`
+	TX      uint64 `json:"tx"`
+	Active  bool   `json:"active"`
+	Dropped uint64 `json:"dropped"`
+}
+type delivery struct {
+	sink  Sink
+	queue chan []byte
+	done  chan struct{}
 }
 type Router struct {
 	mu    sync.RWMutex
-	sinks map[netip.Addr]Sink
+	sinks map[netip.Addr]*delivery
 	stats map[netip.Addr]Stats
 }
 
@@ -22,7 +28,7 @@ func (r *Router) Register(ip netip.Addr, s Sink) (func(), error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.sinks == nil {
-		r.sinks = map[netip.Addr]Sink{}
+		r.sinks = map[netip.Addr]*delivery{}
 		r.stats = map[netip.Addr]Stats{}
 	}
 	if !ip.Is4() || s == nil {
@@ -31,7 +37,9 @@ func (r *Router) Register(ip netip.Addr, s Sink) (func(), error) {
 	if r.sinks[ip] != nil {
 		return nil, errors.New("device already connected")
 	}
-	r.sinks[ip] = s
+	e := &delivery{sink: s, queue: make(chan []byte, 256), done: make(chan struct{})}
+	r.sinks[ip] = e
+	go r.deliverWorker(ip, e)
 	st := r.stats[ip]
 	st.Active = true
 	r.stats[ip] = st
@@ -40,10 +48,13 @@ func (r *Router) Register(ip netip.Addr, s Sink) (func(), error) {
 		once.Do(func() {
 			r.mu.Lock()
 			defer r.mu.Unlock()
-			delete(r.sinks, ip)
-			st := r.stats[ip]
-			st.Active = false
-			r.stats[ip] = st
+			close(e.done)
+			if r.sinks[ip] == e {
+				delete(r.sinks, ip)
+				st := r.stats[ip]
+				st.Active = false
+				r.stats[ip] = st
+			}
 		})
 	}, nil
 }
@@ -75,20 +86,61 @@ func (r *Router) Deliver(p []byte) error {
 		return nil
 	}
 	r.mu.RLock()
-	sink := r.sinks[ip]
+	e := r.sinks[ip]
 	r.mu.RUnlock()
-	if sink == nil {
+	if e == nil {
 		return nil
 	}
-	if err := sink.WritePacket(p); err != nil {
-		return err
+	copyPacket := append([]byte(nil), p...)
+	select {
+	case <-e.done:
+		return nil
+	case e.queue <- copyPacket:
+	default:
+		r.mu.Lock()
+		s := r.stats[ip]
+		s.Dropped++
+		r.stats[ip] = s
+		r.mu.Unlock()
 	}
-	r.mu.Lock()
-	s := r.stats[ip]
-	s.TX += uint64(len(p))
-	r.stats[ip] = s
-	r.mu.Unlock()
 	return nil
+}
+func (r *Router) deliverWorker(ip netip.Addr, e *delivery) {
+	defer func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.sinks[ip] == e {
+			delete(r.sinks, ip)
+			s := r.stats[ip]
+			s.Active = false
+			r.stats[ip] = s
+		}
+	}()
+	for {
+		select {
+		case <-e.done:
+			return
+		default:
+		}
+		select {
+		case <-e.done:
+			return
+		case packet := <-e.queue:
+			select {
+			case <-e.done:
+				return
+			default:
+			}
+			if err := e.sink.WritePacket(packet); err != nil {
+				return
+			}
+			r.mu.Lock()
+			s := r.stats[ip]
+			s.TX += uint64(len(packet))
+			r.stats[ip] = s
+			r.mu.Unlock()
+		}
+	}
 }
 func (r *Router) Snapshot() map[string]Stats {
 	r.mu.RLock()
