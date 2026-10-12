@@ -13,7 +13,7 @@ func TestPortConflictsDoNotChangeWorkingServer(t *testing.T) {
 	defer server.Close()
 	s := apiTest{t: t, server: server}
 	s.login()
-	socket, err := net.Listen("tcp", "127.0.0.1:0")
+	socket, err := net.Listen("tcp", ":0")
 	if err != nil {
 		t.Fatal(err)
 	}
