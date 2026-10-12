@@ -1,0 +1,21 @@
+name: updater-test
+
+on:
+  push:
+    branches: [mist-hardening-32]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  detect-service:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: POSIX shell syntax check
+        run: |
+          sh -n scripts/UPDATE-MIST-EDGE.sh scripts/test-update-detect.sh
+          dash -n scripts/UPDATE-MIST-EDGE.sh scripts/test-update-detect.sh
+      - name: Test custom systemd service detection
+        run: sh scripts/test-update-detect.sh

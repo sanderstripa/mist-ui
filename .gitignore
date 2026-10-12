@@ -1,0 +1,5 @@
+/dist/
+/.cache/
+*.exe
+*.log
+__pycache__/

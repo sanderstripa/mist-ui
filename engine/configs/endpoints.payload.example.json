@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "expires_unix": 1790208000,
+  "endpoints": [
+    {
+      "authority": "edge-a.example.com",
+      "dial_addresses": [
+        "203.0.113.10:443",
+        "203.0.113.10:8443"
+      ],
+      "path": "/assets/4c8d0e7f",
+      "provider": "provider-a",
+      "asn": "AS64500"
+    },
+    {
+      "authority": "edge-b.example.net",
+      "dial_address": "198.51.100.20:443",
+      "path": "/assets/4c8d0e7f",
+      "provider": "provider-b",
+      "asn": "AS64501"
+    }
+  ]
+}

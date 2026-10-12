@@ -1,0 +1,142 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache: true
+      - run: go mod tidy
+      - run: git diff --exit-code -- go.mod go.sum
+      - run: go test ./...
+      - name: Syntax-check Edge scripts
+        run: bash -n scripts/verify-edge.sh scripts/UPDATE-MIST-EDGE.sh
+      - name: Parse PowerShell helper scripts
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($file in @('scripts/verify-client.ps1','scripts/soak-client.ps1','scripts/collect-debug.ps1')) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $failed = $true
+              Write-Host "PowerShell parse errors in $file"
+              $errors | ForEach-Object { Write-Host $_.Message }
+            }
+          }
+          if ($failed) { exit 1 }
+      - run: mkdir -p dist && go build -trimpath -o dist/mist-edge-linux-amd64 ./cmd/mist-edge
+      - run: go build -trimpath -o dist/mist-edge-bootstrap-linux-amd64 ./cmd/mist-edge-bootstrap
+      - run: go build -trimpath -o dist/mist-client-linux-amd64 ./cmd/mist-client
+      - run: go build -trimpath -o dist/mist-echgen-linux-amd64 ./cmd/mist-echgen
+      - run: go build -trimpath -o dist/mist-token-linux-amd64 ./cmd/mist-token
+      - run: go build -trimpath -o dist/mist-endpoints-linux-amd64 ./cmd/mist-endpoints
+      - uses: actions/upload-artifact@v4
+        if: github.ref != 'refs/heads/mist-hardening-32'
+        continue-on-error: true
+        with:
+          name: mist-linux-amd64
+          path: dist/*
+
+  windows-cross-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache: true
+      - run: go mod tidy
+      - run: git diff --exit-code -- go.mod go.sum
+      - name: Verify vendored Wintun package
+        run: echo "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51  third_party/wintun-0.14.1.zip" | sha256sum -c -
+      - name: Build Windows client
+        run: |
+          rm -rf dist
+          mkdir -p dist/MIST-Windows-Portable
+          GOOS=windows GOARCH=amd64 go build -trimpath -o dist/MIST-Windows-Portable/mist-client-windows-amd64.exe ./cmd/mist-client
+          GOOS=windows GOARCH=amd64 go build -trimpath -o dist/MIST-Windows-Portable/mist-bench-windows-amd64.exe ./cmd/mist-bench
+          GOOS=windows GOARCH=amd64 go build -trimpath -o dist/MIST-Windows-Portable/mist-token-windows-amd64.exe ./cmd/mist-token
+          GOOS=windows GOARCH=amd64 go build -trimpath -o dist/MIST-Windows-Portable/mist-endpoints-windows-amd64.exe ./cmd/mist-endpoints
+          cp scripts/verify-client.ps1 scripts/soak-client.ps1 scripts/collect-debug.ps1 scripts/START-MIST.cmd scripts/RECOVER-MIST.cmd scripts/README-WINDOWS-RU.txt configs/client.example.json dist/MIST-Windows-Portable/
+          printf 'MIST hardening-32\ncommit=%s\nbuilt_utc=%s\n' "$GITHUB_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > dist/MIST-Windows-Portable/BUILD.txt
+          unzip -j third_party/wintun-0.14.1.zip wintun/bin/amd64/wintun.dll -d dist/MIST-Windows-Portable
+          unzip -j third_party/wintun-0.14.1.zip wintun/LICENSE.txt -d dist/MIST-Windows-Portable
+      - uses: actions/upload-artifact@v4
+        if: github.ref != 'refs/heads/mist-hardening-32'
+        continue-on-error: true
+        with:
+          name: mist-windows-amd64
+          path: dist/MIST-Windows-Portable/*
+
+  publish-hardening-test-build:
+    if: github.ref == 'refs/heads/mist-hardening-32' && github.event_name == 'push'
+    needs: [linux, windows-cross-build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache: true
+      - name: Verify vendored Wintun package
+        run: echo "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51  third_party/wintun-0.14.1.zip" | sha256sum -c -
+      - name: Build release packages
+        run: |
+          set -euxo pipefail
+          short="${GITHUB_SHA::7}"
+          rm -rf dist
+          mkdir -p dist/windows/MIST-Windows-Portable dist/linux/MIST-Linux-Edge-amd64 dist/updater/MIST-Edge-Updater-Windows
+
+          GOOS=windows GOARCH=amd64 go build -trimpath -o dist/windows/MIST-Windows-Portable/mist-client-windows-amd64.exe ./cmd/mist-client
+          GOOS=windows GOARCH=amd64 go build -trimpath -o dist/windows/MIST-Windows-Portable/mist-bench-windows-amd64.exe ./cmd/mist-bench
+          GOOS=windows GOARCH=amd64 go build -trimpath -o dist/windows/MIST-Windows-Portable/mist-token-windows-amd64.exe ./cmd/mist-token
+          GOOS=windows GOARCH=amd64 go build -trimpath -o dist/windows/MIST-Windows-Portable/mist-endpoints-windows-amd64.exe ./cmd/mist-endpoints
+          cp scripts/verify-client.ps1 scripts/soak-client.ps1 scripts/collect-debug.ps1 scripts/START-MIST.cmd scripts/RECOVER-MIST.cmd scripts/README-WINDOWS-RU.txt configs/client.example.json dist/windows/MIST-Windows-Portable/
+          printf 'MIST hardening-32\ncommit=%s\nbuilt_utc=%s\n' "$GITHUB_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > dist/windows/MIST-Windows-Portable/BUILD.txt
+          unzip -j third_party/wintun-0.14.1.zip wintun/bin/amd64/wintun.dll -d dist/windows/MIST-Windows-Portable
+          unzip -j third_party/wintun-0.14.1.zip wintun/LICENSE.txt -d dist/windows/MIST-Windows-Portable
+          (cd dist/windows && zip -r "../MIST-Windows-Portable-${short}.zip" MIST-Windows-Portable)
+
+          go build -trimpath -o dist/linux/MIST-Linux-Edge-amd64/mist-edge-linux-amd64 ./cmd/mist-edge
+          go build -trimpath -o dist/linux/MIST-Linux-Edge-amd64/mist-edge-bootstrap-linux-amd64 ./cmd/mist-edge-bootstrap
+          go build -trimpath -o dist/linux/MIST-Linux-Edge-amd64/mist-token-linux-amd64 ./cmd/mist-token
+          go build -trimpath -o dist/linux/MIST-Linux-Edge-amd64/mist-endpoints-linux-amd64 ./cmd/mist-endpoints
+          cp scripts/verify-edge.sh scripts/UPDATE-MIST-EDGE.sh scripts/README-EDGE-RU.txt configs/server.example.json configs/endpoints.payload.example.json dist/linux/MIST-Linux-Edge-amd64/
+          chmod +x dist/linux/MIST-Linux-Edge-amd64/verify-edge.sh dist/linux/MIST-Linux-Edge-amd64/UPDATE-MIST-EDGE.sh
+          printf 'MIST hardening-32\ncommit=%s\nbuilt_utc=%s\n' "$GITHUB_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > dist/linux/MIST-Linux-Edge-amd64/BUILD.txt
+          tar -C dist/linux -czf "dist/MIST-Linux-Edge-amd64-${short}.tar.gz" MIST-Linux-Edge-amd64
+
+          cp scripts/UPDATE-MIST-EDGE-WINDOWS.cmd scripts/README-EDGE-UPDATER-WINDOWS-RU.txt dist/updater/MIST-Edge-Updater-Windows/
+          cp "dist/MIST-Linux-Edge-amd64-${short}.tar.gz" dist/updater/MIST-Edge-Updater-Windows/MIST-EDGE-PAYLOAD.tar.gz
+          printf 'MIST Edge Windows Updater\ncommit=%s\nbuilt_utc=%s\n' "$GITHUB_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > dist/updater/MIST-Edge-Updater-Windows/BUILD.txt
+          (cd dist/updater && zip -r "../MIST-Edge-Updater-Windows-${short}.zip" MIST-Edge-Updater-Windows)
+
+          sha256sum "dist/MIST-Windows-Portable-${short}.zip" "dist/MIST-Linux-Edge-amd64-${short}.tar.gz" "dist/MIST-Edge-Updater-Windows-${short}.zip" > dist/SHA256SUMS.txt
+      - name: Publish prerelease test build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          short="${GITHUB_SHA::7}"
+          tag="mist-hardening-32-${short}"
+          gh release create "$tag" \
+            "dist/MIST-Windows-Portable-${short}.zip" \
+            "dist/MIST-Linux-Edge-amd64-${short}.tar.gz" \
+            "dist/MIST-Edge-Updater-Windows-${short}.zip" \
+            "dist/SHA256SUMS.txt" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "MIST hardening-32 test build ${short}" \
+            --notes "Fresh test build from mist-hardening-32 at commit ${GITHUB_SHA}. For ordinary VPS updates on Windows, download MIST-Edge-Updater-Windows-${short}.zip, extract it, and double-click UPDATE-MIST-EDGE-WINDOWS.cmd. The updater remembers the VPS address after the first run and performs upload, backup, install, restart, verification and rollback automatically. Windows client and full Linux Edge packages are also attached."

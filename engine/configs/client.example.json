@@ -1,0 +1,42 @@
+{
+  "endpoints": [
+    {
+      "authority": "edge-a.example.com",
+      "dial_addresses": [
+        "203.0.113.10:443",
+        "203.0.113.10:8443"
+      ],
+      "path": "/assets/4c8d0e7f",
+      "provider": "provider-a",
+      "asn": "AS64500"
+    },
+    {
+      "authority": "edge-b.example.net",
+      "dial_address": "198.51.100.20:443",
+      "path": "/assets/4c8d0e7f",
+      "provider": "provider-b",
+      "asn": "AS64501"
+    }
+  ],
+  "token": "REPLACE_WITH_STATIC_OR_SHORT_LIVED_TOKEN",
+  "tun_name": "MIST",
+  "mtu": 1280,
+  "dns": [
+    "1.1.1.1",
+    "1.0.0.1"
+  ],
+  "h2_fallback": true,
+  "fallback_client_cidr": "10.64.0.2/32",
+  "inner_quic_policy": "auto",
+  "mss_clamp": 1200,
+  "pmtu_mode": "auto",
+  "kill_switch": "fail_closed",
+  "telemetry_interval_seconds": 10,
+  "wire_profile": "native",
+  "endpoint_strategy": "ordered",
+  "ipv6_mode": "block",
+  "endpoint_discovery_url": "",
+  "endpoint_discovery_public_key_base64": "",
+  "endpoint_discovery_timeout_seconds": 5,
+  "reality_fallback_socks5": ""
+}
