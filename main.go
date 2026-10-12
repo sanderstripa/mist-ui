@@ -562,7 +562,7 @@ func (a *App) clientLink(id string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		client := map[string]any{"endpoint": map[string]string{"authority": authority, "dial_address": net.JoinHostPort(ip.String(), port), "path": str(core, "path")}, "token": k.Token, "tun_name": "MIST", "mtu": core["mtu"], "dns": a.state.DNS, "h2_fallback": true, "fallback_client_cidr": k.Address + "/32", "inner_quic_policy": "auto", "mss_clamp": 1200, "pmtu_mode": "auto", "kill_switch": "fail_closed", "ipv6_mode": "block", "wire_profile": "native"}
+		client := map[string]any{"endpoint": map[string]string{"authority": authority, "dial_address": net.JoinHostPort(ip.String(), port), "path": str(core, "path")}, "token": k.Token, "tun_name": "MIST", "mtu": core["mtu"], "dns": a.state.DNS, "h2_fallback": true, "fallback_client_cidr": k.Address + "/32", "inner_quic_policy": "auto", "pmtu_mode": "auto", "kill_switch": "fail_closed", "ipv6_mode": "block", "wire_profile": "native"}
 		b, err := json.Marshal(client)
 		if err != nil {
 			return "", err
