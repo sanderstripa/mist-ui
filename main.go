@@ -56,6 +56,7 @@ type Device struct {
 	Revoked   bool   `json:"revoked"`
 	Expires   int64  `json:"expires"`
 	Created   int64  `json:"created"`
+	Deleted   bool   `json:"deleted,omitempty"`
 }
 type State struct {
 	Version int      `json:"version"`
@@ -75,11 +76,15 @@ type App struct {
 	sessions map[string]Session
 	attempts map[string][]time.Time
 	control  func(string) (string, error)
+	metrics  hostSampler
+	updating bool
 }
 type Traffic struct {
-	RX     uint64 `json:"rx"`
-	TX     uint64 `json:"tx"`
-	Active bool   `json:"active"`
+	RX       uint64 `json:"rx"`
+	TX       uint64 `json:"tx"`
+	Active   bool   `json:"active"`
+	LastSeen int64  `json:"last_seen"`
+	Epoch    int64  `json:"epoch"`
 }
 
 func random(n int) string {
@@ -299,6 +304,8 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST /api/settings", a.auth(a.settings))
 	mux.HandleFunc("POST /api/password", a.auth(a.password))
 	mux.HandleFunc("GET /api/logs", a.auth(a.logs))
+	mux.HandleFunc("GET /api/update", a.auth(a.checkUpdate))
+	mux.HandleFunc("POST /api/update", a.auth(a.startUpdate))
 	sub, _ := fs.Sub(web, "web")
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 	root := strings.TrimRight(a.cfg.WebPath, "/")
@@ -374,6 +381,7 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
+		Remember bool   `json:"remember"`
 	}
 	if !body(w, r, &in) {
 		return
@@ -396,9 +404,17 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		problem(w, 429, "Слишком много сеансов")
 		return
 	}
-	a.sessions[token] = Session{csrf, now.Add(12 * time.Hour)}
+	duration := 12 * time.Hour
+	if in.Remember {
+		duration = 30 * 24 * time.Hour
+	}
+	a.sessions[token] = Session{csrf, now.Add(duration)}
 	a.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: "mist_session", Value: token, Path: a.cfg.WebPath + "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 43200})
+	age := 0
+	if in.Remember {
+		age = int(duration.Seconds())
+	}
+	http.SetCookie(w, &http.Cookie{Name: "mist_session", Value: token, Path: a.cfg.WebPath + "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: age})
 	response(w, 200, map[string]string{"csrf": csrf})
 }
 func (a *App) logout(w http.ResponseWriter, r *http.Request) {
@@ -419,8 +435,12 @@ func (a *App) getState(w http.ResponseWriter, r *http.Request) {
 	}
 	stats := map[string]Traffic{}
 	_ = readJSON(a.cfg.StatsFile, &stats)
+	stats = a.accountTraffic(stats)
 	out := []map[string]any{}
 	for _, k := range a.state.Keys {
+		if k.Deleted {
+			continue
+		}
 		status := "enabled"
 		if !k.Enabled {
 			status = "disabled"
@@ -444,7 +464,7 @@ func (a *App) getState(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	response(w, 200, map[string]any{"name": a.state.Name, "dns": a.state.DNS, "keys": out, "service": status, "version": Version, "csrf": csrf, "endpoint": str(core, "authority"), "listen": str(core, "listen"), "certificate_expires": certificateExpiry})
+	response(w, 200, map[string]any{"name": a.state.Name, "dns": a.state.DNS, "keys": out, "service": status, "version": Version, "csrf": csrf, "endpoint": str(core, "authority"), "listen": str(core, "listen"), "certificate_expires": certificateExpiry, "host": a.metrics.sample()})
 }
 func (a *App) createKey(w http.ResponseWriter, r *http.Request) {
 	var in struct {
@@ -524,6 +544,29 @@ func (a *App) keyAction(w http.ResponseWriter, r *http.Request) {
 		case "revoke":
 			k.Enabled = false
 			k.Revoked = true
+		case "delete":
+			k.Enabled = false
+			k.Revoked = true
+			k.Deleted = true
+		case "edit":
+			var in struct {
+				Name string `json:"name"`
+				Days int    `json:"days"`
+			}
+			if !body(w, r, &in) {
+				return
+			}
+			in.Name = strings.TrimSpace(in.Name)
+			if in.Name == "" || len(in.Name) > 120 || in.Days < -1 || in.Days > 3650 {
+				problem(w, 400, "Некорректное название или срок")
+				return
+			}
+			k.Name = in.Name
+			if in.Days == 0 {
+				k.Expires = 0
+			} else if in.Days > 0 {
+				k.Expires = time.Now().Add(time.Duration(in.Days) * 24 * time.Hour).Unix()
+			}
 		default:
 			problem(w, 400, "Неизвестное действие")
 			return

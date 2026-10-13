@@ -4,14 +4,17 @@ import (
 	"errors"
 	"net/netip"
 	"sync"
+	"time"
 )
 
 type Sink interface{ WritePacket([]byte) error }
 type Stats struct {
-	RX      uint64 `json:"rx"`
-	TX      uint64 `json:"tx"`
-	Active  bool   `json:"active"`
-	Dropped uint64 `json:"dropped"`
+	RX       uint64 `json:"rx"`
+	TX       uint64 `json:"tx"`
+	Active   bool   `json:"active"`
+	Dropped  uint64 `json:"dropped"`
+	LastSeen int64  `json:"last_seen"`
+	Epoch    int64  `json:"epoch"`
 }
 type delivery struct {
 	sink  Sink
@@ -22,6 +25,7 @@ type Router struct {
 	mu    sync.RWMutex
 	sinks map[netip.Addr]*delivery
 	stats map[netip.Addr]Stats
+	epoch int64
 }
 
 func (r *Router) Register(ip netip.Addr, s Sink) (func(), error) {
@@ -30,6 +34,7 @@ func (r *Router) Register(ip netip.Addr, s Sink) (func(), error) {
 	if r.sinks == nil {
 		r.sinks = map[netip.Addr]*delivery{}
 		r.stats = map[netip.Addr]Stats{}
+		r.epoch = time.Now().UnixNano()
 	}
 	if !ip.Is4() || s == nil {
 		return nil, errors.New("IPv4 client required")
@@ -42,6 +47,8 @@ func (r *Router) Register(ip netip.Addr, s Sink) (func(), error) {
 	go r.deliverWorker(ip, e)
 	st := r.stats[ip]
 	st.Active = true
+	st.Epoch = r.epoch
+	st.LastSeen = time.Now().Unix()
 	r.stats[ip] = st
 	var once sync.Once
 	return func() {
@@ -78,6 +85,7 @@ func (r *Router) Inbound(ip netip.Addr, n int) {
 	defer r.mu.Unlock()
 	s := r.stats[ip]
 	s.RX += uint64(n)
+	s.LastSeen = time.Now().Unix()
 	r.stats[ip] = s
 }
 func (r *Router) Deliver(p []byte) error {
@@ -137,6 +145,7 @@ func (r *Router) deliverWorker(ip netip.Addr, e *delivery) {
 			r.mu.Lock()
 			s := r.stats[ip]
 			s.TX += uint64(len(packet))
+			s.LastSeen = time.Now().Unix()
 			r.stats[ip] = s
 			r.mu.Unlock()
 		}
